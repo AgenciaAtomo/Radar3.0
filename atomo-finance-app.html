@@ -2368,9 +2368,9 @@ function exSetFile(f) {
   document.getElementById('extrato-btn-zone').style.display = 'block';
 }
 
-const GROQ_KEY = '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';
-const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
-const GROQ_MODEL = 'llama-3.3-70b-versatile';
+const CLAUDE_KEY = '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';
+const CLAUDE_URL = 'https://api.anthropic.com/v1/messages';
+const CLAUDE_MODEL = 'claude-sonnet-4-20250514';
 
 function exIniciarPagina() {
   if (!EX.file) exReset();
@@ -2450,33 +2450,53 @@ async function analisarExtrato() {
 
     setMsg('IA analisando o extrato... (pode levar até 20s)');
 
-    // Groq não suporta PDF nem imagem — orientar o usuário
-    if (ext === 'pdf' || ['png','jpg','jpeg'].includes(ext)) {
-      prog.style.display = 'none';
-      document.getElementById('extrato-config').style.display = 'block';
-      document.getElementById('extrato-btn-zone').style.display = 'block';
-      document.getElementById('extrato-file-info').style.display = 'flex';
-      toast('Use CSV, OFX ou TXT. PDF e imagem não são suportados pela Groq.', 'err');
-      return;
+    let apiMessages;
+
+    if (ext === 'pdf') {
+      setMsg('Lendo PDF...');
+      const b64 = await fileToBase64(f);
+      apiMessages = [{
+        role: 'user',
+        content: [
+          { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64 } },
+          { type: 'text', text: PROMPT_EXTRATO }
+        ]
+      }];
+    } else if (['png','jpg','jpeg'].includes(ext)) {
+      setMsg('Lendo imagem...');
+      const b64 = await fileToBase64(f);
+      const mime = ext === 'png' ? 'image/png' : 'image/jpeg';
+      apiMessages = [{
+        role: 'user',
+        content: [
+          { type: 'image', source: { type: 'base64', media_type: mime, data: b64 } },
+          { type: 'text', text: PROMPT_EXTRATO }
+        ]
+      }];
+    } else {
+      // CSV / OFX / TXT já vieram como texto em messages
+      apiMessages = messages;
     }
 
-    const res = await fetch(GROQ_URL, {
+    const res = await fetch(CLAUDE_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + GROQ_KEY },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': CLAUDE_KEY,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+      },
       body: JSON.stringify({
-        model: GROQ_MODEL,
+        model: CLAUDE_MODEL,
         max_tokens: 4000,
-        temperature: 0,
-        messages: [
-          { role: 'system', content: SYSTEM_GROQ },
-          { role: 'user', content: typeof messages[0].content === 'string' ? messages[0].content : messages[0].content.find(b => b.type === 'text')?.text || '' }
-        ],
+        system: SYSTEM_GROQ,
+        messages: apiMessages,
       })
     });
 
-    if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(`Groq error ${res.status}: ${err?.error?.message || ''}`); }
+    if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(`Claude error ${res.status}: ${err?.error?.message || ''}`); }
     const data = await res.json();
-    const raw  = data.choices?.[0]?.message?.content || '[]';
+    const raw  = data.content?.map(b => b.text || '').join('').trim() || '[]';
 
     // Limpar possível markdown
     const json = raw.replace(/^```json\s*/,'').replace(/```\s*$/,'').trim();

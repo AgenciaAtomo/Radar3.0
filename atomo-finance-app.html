@@ -771,6 +771,8 @@ textarea{resize:vertical;min-height:70px}
       </div>
 
       <!-- Upload zone -->
+
+      <!-- Upload zone -->
       <div id="extrato-upload-zone" style="border:2px dashed var(--border-a);border-radius:var(--r-lg);padding:48px 24px;text-align:center;cursor:pointer;transition:border .2s,background .2s;margin-bottom:24px"
            ondragover="exDragOver(event)" ondragleave="exDragLeave(event)" ondrop="exDrop(event)" onclick="document.getElementById('extrato-file-input').click()">
         <div style="font-size:48px;margin-bottom:12px">📄</div>
@@ -847,6 +849,7 @@ textarea{resize:vertical;min-height:70px}
                     <input type="checkbox" id="ex-check-all" onchange="exToggleAll(this.checked)" style="accent-color:var(--accent)">
                   </th>
                   <th style="padding:10px 12px;text-align:left;font-weight:600;color:var(--muted);font-size:11px;letter-spacing:.06em">DATA</th>
+                  <th style="padding:10px 12px;text-align:left;font-weight:600;color:var(--muted);font-size:11px;letter-spacing:.06em">HORA</th>
                   <th style="padding:10px 12px;text-align:left;font-weight:600;color:var(--muted);font-size:11px;letter-spacing:.06em">DESCRIÇÃO</th>
                   <th style="padding:10px 12px;text-align:left;font-weight:600;color:var(--muted);font-size:11px;letter-spacing:.06em">TIPO</th>
                   <th style="padding:10px 12px;text-align:left;font-weight:600;color:var(--muted);font-size:11px;letter-spacing:.06em">CATEGORIA</th>
@@ -2365,8 +2368,11 @@ function exSetFile(f) {
   document.getElementById('extrato-btn-zone').style.display = 'block';
 }
 
+const GROQ_KEY = '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';
+const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
+const GROQ_MODEL = 'llama-3.3-70b-versatile';
+
 function exIniciarPagina() {
-  // Resetar se não houver análise em andamento
   if (!EX.file) exReset();
 }
 
@@ -2444,23 +2450,33 @@ async function analisarExtrato() {
 
     setMsg('IA analisando o extrato... (pode levar até 20s)');
 
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
+    // Groq não suporta PDF nem imagem — orientar o usuário
+    if (ext === 'pdf' || ['png','jpg','jpeg'].includes(ext)) {
+      prog.style.display = 'none';
+      document.getElementById('extrato-config').style.display = 'block';
+      document.getElementById('extrato-btn-zone').style.display = 'block';
+      document.getElementById('extrato-file-info').style.display = 'flex';
+      toast('Use CSV, OFX ou TXT. PDF e imagem não são suportados pela Groq.', 'err');
+      return;
+    }
+
+    const res = await fetch(GROQ_URL, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'anthropic-dangerous-direct-browser-access': 'true',
-      },
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + GROQ_KEY },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
+        model: GROQ_MODEL,
         max_tokens: 4000,
-        system: `Você é um assistente especializado em extratos bancários brasileiros. Sempre responda APENAS com JSON válido, sem markdown, sem texto antes ou depois.`,
-        messages,
+        temperature: 0,
+        messages: [
+          { role: 'system', content: SYSTEM_GROQ },
+          { role: 'user', content: typeof messages[0].content === 'string' ? messages[0].content : messages[0].content.find(b => b.type === 'text')?.text || '' }
+        ],
       })
     });
 
-    if (!res.ok) throw new Error(`API error ${res.status}`);
+    if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(`Groq error ${res.status}: ${err?.error?.message || ''}`); }
     const data = await res.json();
-    const raw = data.content.map(b => b.text || '').join('').trim();
+    const raw  = data.choices?.[0]?.message?.content || '[]';
 
     // Limpar possível markdown
     const json = raw.replace(/^```json\s*/,'').replace(/```\s*$/,'').trim();
@@ -2479,23 +2495,30 @@ async function analisarExtrato() {
   }
 }
 
-const PROMPT_EXTRATO = `Extraia TODAS as transações deste extrato bancário e retorne SOMENTE um array JSON com este formato exato (sem markdown):
+const SYSTEM_GROQ = `Você é um especialista em extratos bancários brasileiros. Sua tarefa é extrair TODAS as transações do extrato fornecido e retornar SOMENTE um array JSON válido, sem markdown, sem texto antes ou depois, sem explicações.`;
+
+const PROMPT_EXTRATO = `Extraia TODAS as transações deste extrato bancário e retorne SOMENTE um array JSON com este formato exato:
 [
   {
     "data": "YYYY-MM-DD",
-    "descricao": "descrição da transação",
+    "hora": "HH:MM" ou null se não houver,
+    "descricao": "nome completo do estabelecimento ou descrição da transação, exatamente como aparece no extrato",
     "tipo": "receita" ou "despesa",
     "valor": 123.45,
     "categoria_sugerida": "uma de: Vendas, Serviços Prestados, Outros Recebimentos, Salários, Aluguel, Fornecedores, Marketing, Impostos, Utilidades, Transferência"
   }
 ]
-Regras:
-- Valores sempre positivos
-- Créditos/entradas = receita, Débitos/saídas = despesa
-- data no formato YYYY-MM-DD
-- Se não conseguir determinar o tipo, use "despesa"
-- Ignore saldo, totais e cabeçalhos — apenas transações
-- Retorne SOMENTE o array JSON, nada mais`;
+
+Regras obrigatórias:
+- Extraia TODAS as transações sem excluir nenhuma
+- Valores sempre positivos (nunca negativos)
+- Créditos / entradas / depósitos / PIX recebido = "receita"
+- Débitos / saídas / pagamentos / compras / PIX enviado = "despesa"
+- data obrigatório no formato YYYY-MM-DD
+- hora: se aparecer horário no extrato, inclua no formato HH:MM; se não aparecer, coloque null
+- descricao: copie exatamente o nome do estabelecimento/beneficiário/origem como consta no extrato
+- Ignore linhas de saldo, cabeçalhos, totais e rodapés — extraia APENAS movimentações
+- Retorne SOMENTE o array JSON, nada mais, nenhuma palavra fora do JSON`;
 
 function parsearOFX(text) {
   const txns = [];
@@ -2557,6 +2580,10 @@ function exMostrarPrevia(contaId) {
         <td style="padding:10px 12px;white-space:nowrap">
           <input type="date" value="${t.data}" onchange="EX.transacoes[${i}].data=this.value"
             style="background:transparent;border:1px solid var(--border);border-radius:6px;padding:4px 8px;color:var(--text);font-family:'Syne',sans-serif;font-size:12px">
+        </td>
+        <td style="padding:10px 12px;white-space:nowrap">
+          <input type="time" value="${t.hora || ''}" onchange="EX.transacoes[${i}].hora=this.value"
+            style="background:transparent;border:1px solid var(--border);border-radius:6px;padding:4px 8px;color:var(--text);font-family:'Syne',sans-serif;font-size:12px;width:80px">
         </td>
         <td style="padding:10px 12px;min-width:200px">
           <input type="text" value="${escHtml(t.descricao)}" onchange="EX.transacoes[${i}].descricao=this.value"
@@ -2652,6 +2679,7 @@ async function lancarTodasExtrato() {
       valor:             parseFloat(t.valor),
       usuario_criador_id: STATE.usuario.id,
       data_lancamento:   t.data,
+      hora_lancamento:   t.hora || null,
       status:            'confirmada',
       observacoes:       obs || `Importado via Extrato IA`,
       idempotency_key:   crypto.randomUUID(),

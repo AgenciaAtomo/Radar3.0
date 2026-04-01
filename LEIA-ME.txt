@@ -1,0 +1,24 @@
+═══════════════════════════════════════════════
+  ÁTOMO FINANCE — DEPLOY
+═══════════════════════════════════════════════
+
+OPÇÃO A — Abrir direto no browser
+  Arraste atomo-finance-app.html para o Chrome/Edge.
+  ⚠️  Se der erro de CORS, use a Opção B.
+
+OPÇÃO B — Servidor local (recomendado)
+  1. Instale Node.js em nodejs.org
+  2. Abra o terminal nesta pasta
+  3. Execute: node server.js
+  4. Acesse: http://localhost:3000
+
+PRIMEIRA ABERTURA
+  O app vai pedir para executar o SQL de setup.
+  Clique "Copiar SQL e abrir editor" → cole no Supabase SQL Editor → Run.
+  O app detecta automaticamente e avança.
+
+A PARTIR DA 2ª ABERTURA
+  Login direto. Nenhuma configuração adicional.
+
+Suporte: agenciaatomo.com.br
+═══════════════════════════════════════════════
